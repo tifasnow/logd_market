@@ -6,6 +6,19 @@ Allows users to have a space for OoC chatter without disturbing general roleplay
 Displays the latest MoTD, polls, and news, above the Market's chat window.
 CC-BY-SA 4.0 github:tifasnow https://github.com/tifasnow/logd_market/
     */
+use League\CommonMark\Environment\Environment;
+use League\CommonMark\Extension\Autolink\AutolinkExtension;
+use League\CommonMark\Extension\CommonMark\CommonMarkCoreExtension;
+use League\CommonMark\Extension\CommonMark\Node\Inline\Link;
+use League\CommonMark\Extension\DefaultAttributes\DefaultAttributesExtension;
+use League\CommonMark\Extension\DescriptionList\DescriptionListExtension;
+use League\CommonMark\Extension\DisallowedRawHtml\DisallowedRawHtmlExtension;
+use League\CommonMark\Extension\Footnote\FootnoteExtension;
+use League\CommonMark\Extension\SmartPunct\SmartPunctExtension;
+use League\CommonMark\Extension\Strikethrough\StrikethroughExtension;
+use League\CommonMark\Extension\Table\TableExtension;
+
+
     function market_getmoduleinfo(){
         $info = array(
             "name"=>"Market",
@@ -16,7 +29,6 @@ CC-BY-SA 4.0 github:tifasnow https://github.com/tifasnow/logd_market/
             "prefs"=>array(
                 "Market,title",
                 "market"=>"Has the user visited the Market?,bool|0",
-                "show_area"=>"Show the Market area?,bool|0",
             ),
             "settings"=>array(
                 "Market Settings,title",
@@ -41,11 +53,10 @@ CC-BY-SA 4.0 github:tifasnow https://github.com/tifasnow/logd_market/
         global $session;
         switch($hookname){
             case "village":
-                if (get_module_pref("show_area") == 1){
                     tlschema($args['schemas']['marketnav']);
                     addnav($args['marketnav']);
                     addnav(get_module_setting("nav_name"),"runmodule.php?module=market&op=enter");
-                }
+                    tlschema();
                 break;
         }
         return $args;
@@ -74,7 +85,6 @@ CC-BY-SA 4.0 github:tifasnow https://github.com/tifasnow/logd_market/
                 poll_display();
             }
             if ($show_news == 1) {
-                output("`c`b`&The latest news:`0`b`c");
                 news_display();
             }
             if ($show_chat == 1) {
@@ -93,23 +103,30 @@ function poll_display()
 
 function news_display()
 {
-    /* This function displays the latest news, however hasn't been validated yet.
-    global $session;
-    $sql = "SELECT newsid, news, author, postdate FROM " . db_prefix("news") . " ORDER BY newsid DESC LIMIT 1";
-    $result = db_query($sql);
-    $row = db_fetch_assoc($result);
-    $newsid = $row['newsid'];
-    $news = $row['news'];
-    $author = $row['author'];
-    $postdate = $row['postdate'];
-    $sql = "SELECT name FROM " . db_prefix("accounts") . " WHERE acctid='$author'";
-    $result = db_query($sql);
-    $row = db_fetch_assoc($result);
-    $author = $row['name'];
-    $postdate = date("F j, Y, g:i a", strtotime($postdate));
-    output("`c`b`&$news`0`b`c");
-    output("`c`b`&Posted by $author on $postdate`0`b`c");
-    */
+    // This function displays the latest news, if there is any.
+    tlschema("news");
+                output("`n`2`c`bLatest News`b`c");
+                output("`2`c-=-=-=-=-=-=-=-`c");
+                $sql = "SELECT newstext,arguments FROM " . db_prefix("news") . " ORDER BY newsid DESC LIMIT 1";
+                $result = db_query($sql) or die(db_error(LINK));
+                for ($i = 0; $i < 1; $i++) {
+                    $row = db_fetch_assoc($result);
+                    if ($row['arguments'] > "") {
+                        $arguments = array();
+                        $base_arguments = unserialize($row['arguments']);
+                        array_push($arguments, $row['newstext']);
+                        foreach ($base_arguments as $key => $val) {
+                            array_push($arguments, $val);
+                        }
+                        $newnews = call_user_func_array("sprintf_translate", $arguments);
+                    } else {
+                        $newnews = $row['newstext'];
+                    }
+                    output("`c %s `c", $newnews);
+                    if ($i <> 1) output("`2`c-=-=-=-=-=-=-=-`c");
+                }
+                output("`n");
+                tlschema("user");
 }
 
 function chatroom()
@@ -123,15 +140,43 @@ function chatroom()
 function motd()
 {
     global $session;
-    $sql = "SELECT motdbody FROM " . db_prefix("motd") . " ORDER BY motddate DESC LIMIT 1";
+    $sql = "SELECT motdtitle, motddate, motdauthor, motdbody, name as motdauthorname FROM ".db_prefix("motd")." LEFT JOIN ".db_prefix("accounts")." ON ".db_prefix("accounts").".acctid = ".db_prefix("motd").".motdauthor ORDER BY motddate DESC LIMIT 1;";
     $result = db_query($sql);
     $row = db_fetch_assoc($result);
     $motd = $row['motdbody'];
-    output_notl("`c`b`&$motd`0`b`c");
+    $motdtitle = $row['motdtitle'];
+    $motdauthor = $row['motdauthorname'];
+    $motddate = $row['motddate'];
+    $environment = new Environment([
+        'allow_unsafe_links' => false,
+        'default_attributes' => [
+            Link::class => [
+                'class' => 'btn btn-link',
+                'target' => '_blank',
+            ],
+        ],
+    ]);
+
+    $environment->addExtension(new CommonMarkCoreExtension());
+    $environment->addExtension(new DefaultAttributesExtension());
+    $converter = new \League\CommonMark\MarkdownConverter($environment);
+    $environment->addExtension(new AutolinkExtension());
+    $environment->addExtension(new DisallowedRawHtmlExtension());
+    $environment->addExtension(new DescriptionListExtension());
+    $environment->addExtension(new FootnoteExtension());
+    $environment->addExtension(new SmartPunctExtension());
+    $environment->addExtension(new StrikethroughExtension());
+    $environment->addExtension(new TableExtension());
+
+    output_notl("`b`^%s`0`b", $motdtitle);
+    rawoutput(iconv("UTF-8",getsetting('charset','ISO-8859-1')."//TRANSLIT",$converter->convertToHtml(mb_convert_encoding(appoencode($motd."`n",true),"UTF-8"))));
+    output_notl("`c`b`&Posted by %s on %s`0`b`c", $motdauthor, $motddate);
+
 }
 
 function market_runevent()
 {
     return true;
 }
+
 ?>
